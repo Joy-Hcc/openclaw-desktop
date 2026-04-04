@@ -80,15 +80,29 @@ function startServer() {
     const openclawPath = getOpenClawPath();
     console.log('Starting OpenClaw with:', openclawPath);
 
-    serverProcess = spawn(openclawPath, ['gateway'], {
-      detached: true,
+    // Windows 上 .cmd 文件需要特殊处理
+    let cmd, args;
+    if (openclawPath.endsWith('.cmd')) {
+      cmd = 'cmd.exe';
+      args = ['/c', openclawPath, 'gateway'];
+    } else {
+      cmd = openclawPath;
+      args = ['gateway'];
+    }
+
+    serverProcess = spawn(cmd, args, {
+      detached: false,
       stdio: 'ignore',
-      shell: true,
+      shell: false,
       windowsHide: true
     });
 
     serverProcess.on('error', (err) => reject(new Error(`启动失败: ${err.message}`)));
-    serverProcess.unref();
+    serverProcess.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        console.error(`OpenClaw exited with code ${code}`);
+      }
+    });
 
     if (await waitForServer()) resolve();
     else reject(new Error('服务器启动超时'));
