@@ -49,6 +49,25 @@ async function waitForServer(maxAttempts = 30) {
   return false;
 }
 
+// 可能的 openclaw 路径
+function getOpenClawPath() {
+  const possiblePaths = [
+    'openclaw', // 如果在 PATH 中
+    path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'openclaw.cmd'),
+    path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'openclaw'),
+    'C:\\Program Files\\nodejs\\openclaw.cmd',
+  ];
+
+  for (const cmdPath of possiblePaths) {
+    try {
+      if (fs.existsSync(cmdPath) || cmdPath === 'openclaw') {
+        return cmdPath;
+      }
+    } catch (e) {}
+  }
+  return 'openclaw'; //  fallback
+}
+
 // 启动 OpenClaw 服务器
 function startServer() {
   return new Promise(async (resolve, reject) => {
@@ -58,7 +77,10 @@ function startServer() {
       return;
     }
 
-    serverProcess = spawn('openclaw', ['gateway'], {
+    const openclawPath = getOpenClawPath();
+    console.log('Starting OpenClaw with:', openclawPath);
+
+    serverProcess = spawn(openclawPath, ['gateway'], {
       detached: true,
       stdio: 'ignore',
       shell: true,
