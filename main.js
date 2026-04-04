@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -69,33 +69,43 @@ function getOpenClawPath() {
 }
 
 // 启动 OpenClaw 服务器
-function startServer() {
-  return new Promise(async (resolve, reject) => {
-    const isRunning = await checkPort(PORT);
-    if (isRunning) {
-      resolve();
-      return;
-    }
+async function startServer() {
+  const isRunning = await checkPort(PORT);
+  if (isRunning) {
+    return;
+  }
 
-    const openclawPath = getOpenClawPath();
-    console.log('Starting OpenClaw with:', openclawPath);
+  const openclawPath = getOpenClawPath();
+  console.log('Starting OpenClaw with:', openclawPath);
 
-    // Windows 上直接执行命令
-    const command = `"${openclawPath}" gateway`;
-    serverProcess = spawn(command, [], {
-      shell: true,
-      stdio: 'ignore',
-      windowsHide: true
+  // Windows 上直接执行命令
+  const command = `"${openclawPath}" gateway`;
+  serverProcess = spawn(command, [], {
+    shell: true,
+    stdio: 'ignore',
+    windowsHide: true
+  });
+
+  await new Promise((resolve, reject) => {
+    serverProcess.on('error', (err) => {
+      reject(new Error(`启动失败: ${err.message}`));
     });
-
-    serverProcess.on('error', (err) => reject(new Error(`启动失败: ${err.message}`)));
     serverProcess.on('exit', (code) => {
       console.log(`OpenClaw exited with code ${code}`);
     });
-
-    if (await waitForServer()) resolve();
-    else reject(new Error('服务器启动超时'));
+    waitForServer().then((ready) => {
+      if (ready) resolve();
+      else reject(new Error('服务器启动超时'));
+    });
   });
+}
+
+// 清理服务器进程
+function stopServer() {
+  if (serverProcess && !serverProcess.killed) {
+    serverProcess.kill();
+    serverProcess = null;
+  }
 }
 
 // 创建主窗口
@@ -122,13 +132,15 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     if (gatewayToken && !hasInjectedToken) {
       hasInjectedToken = true;
-      // 通过 localStorage 设置 token
-      mainWindow.webContents.executeJavaScript(`
-        const settings = JSON.parse(localStorage.getItem('openclaw.control.settings.v1') || '{}');
-        settings.gatewayToken = '${gatewayToken}';
-        localStorage.setItem('openclaw.control.settings.v1', JSON.stringify(settings));
-        console.log('Token injected');
-      `).catch(() => {});
+      const script = `
+        (function() {
+          const settings = JSON.parse(localStorage.getItem('openclaw.control.settings.v1') || '{}');
+          settings.gatewayToken = ${JSON.stringify(gatewayToken)};
+          localStorage.setItem('openclaw.control.settings.v1', JSON.stringify(settings));
+          console.log('Token injected');
+        })();
+      `;
+      mainWindow.webContents.executeJavaScript(script).catch(() => {});
 
       // 刷新页面使 token 生效
       setTimeout(() => {
@@ -147,14 +159,22 @@ app.whenReady().then(async () => {
     createWindow();
   } catch (err) {
     console.error('Error:', err.message);
+    dialog.showErrorBox('启动失败', err.message);
     app.quit();
   }
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin') {
+    stopServer();
+    app.quit();
+  }
 });
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+app.on('before-quit', () => {
+  stopServer();
 });
